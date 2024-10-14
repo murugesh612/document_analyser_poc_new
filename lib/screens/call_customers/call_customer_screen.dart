@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:document_analyser_poc_new/blocs/customer_phone_call/customer_phone_call_bloc.dart';
 import 'package:document_analyser_poc_new/blocs/policy/policy_bloc.dart'
     as ranked_policy;
@@ -7,6 +8,7 @@ import 'package:document_analyser_poc_new/screens/call_customers/widgets/generat
 import 'package:document_analyser_poc_new/utils/utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:socket_io_client/socket_io_client.dart' as IO;
 
 class CallCustomerPage extends StatefulWidget {
   final Leads lead;
@@ -22,18 +24,29 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
   int _elapsedTime = 0;
   late TextEditingController _callSummaryController;
 
-  bool isBtnEnabled = true;
-
-  void _getRankedPolicies(String summary) {
-    context
-        .read<ranked_policy.PolicyBloc>()
-        .add(ranked_policy.FetchRankedPolicies(summary: summary));
-  }
+  late IO.Socket socket;
 
   @override
   void initState() {
     super.initState();
     _callSummaryController = TextEditingController();
+
+    socket = IO.io("ws://localhost:5000", <String, dynamic>{
+      'transports': ['websocket'],
+      'autoConnect': false,
+    });
+
+    socket.on('summary_data', (data) {
+      print('websocket listener data - $data');
+    });
+
+    socket.connect();
+  }
+
+  void _getRankedPolicies(String summary) {
+    context
+        .read<ranked_policy.PolicyBloc>()
+        .add(ranked_policy.FetchRankedPolicies(summary: summary));
   }
 
   void _getcallsummary() {
@@ -44,6 +57,8 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
   void dispose() {
     _callTimer?.cancel();
     _callSummaryController.dispose();
+    socket.disconnect();
+    socket.dispose();
     super.dispose();
   }
 
@@ -52,6 +67,10 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
       _isCalling = !_isCalling;
 
       if (_isCalling) {
+        // Emit offer event when the call starts
+        _sendCallOfferEvent();
+
+        // Start the call timer
         _callTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
           setState(() {
             _elapsedTime++;
@@ -67,6 +86,11 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
     });
   }
 
+  void _sendCallOfferEvent() {
+    Map<String, dynamic> dataToSend = {'audio_data': 'test data, working....'};
+    socket.emit('offer', dataToSend);
+  }
+
   String _formatElapsedTime(int seconds) {
     final minutes = (seconds ~/ 60).toString().padLeft(2, '0');
     final secs = (seconds % 60).toString().padLeft(2, '0');
@@ -78,17 +102,16 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
     return Container(
       color: Colors.white,
       child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Expanded(
-                child: SingleChildScrollView(child: _buildUI()
-                    // deviceType == Devices.webpage
-                    //     ? _buildUIForDesktop()
-                    //     : _buildUIForMobile()
-
-                    ))
-          ])),
+              child: SingleChildScrollView(child: _buildUI()),
+            )
+          ],
+        ),
+      ),
     );
   }
 
@@ -147,7 +170,7 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
       color: Colors.white,
       elevation: 3,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(5), // Optional: for rounded corners
+        borderRadius: BorderRadius.circular(5),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -202,8 +225,7 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
       child: Card(
         color: Colors.white,
         shape: RoundedRectangleBorder(
-          borderRadius:
-              BorderRadius.circular(5), // Optional: for rounded corners
+          borderRadius: BorderRadius.circular(5),
         ),
         elevation: 2,
         child: Padding(
@@ -234,7 +256,6 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Bloc to conditionally show the button if callSummary is empty
         _summarizeUsingAIButton(),
         BlocBuilder<CustomerPhoneCallBloc, CustomerPhoneCallState>(
           builder: (context, state) {
@@ -244,8 +265,7 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
               );
             } else if (state is ErrorState) {
               return Padding(
-                padding: const EdgeInsets.only(
-                    bottom: 16.0), // Add space for error message
+                padding: const EdgeInsets.only(bottom: 16.0),
                 child: Text(
                   'Error: ${state.error.errorMessage}',
                   style: const TextStyle(color: Colors.red),
@@ -280,109 +300,24 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
                         borderSide: const BorderSide(color: Colors.grey),
                         borderRadius: BorderRadius.circular(4.0),
                       ),
-                      focusedBorder: OutlineInputBorder(
-                        borderSide: const BorderSide(color: Colors.black),
-                        borderRadius: BorderRadius.circular(4.0),
-                      ),
                     ),
                   ),
-                  const SizedBox(height: 16.0),
-                  // if (state is CallSummaryState && state.callSummary.isNotEmpty)
-                  // _generatePoliciesButton(),
-                  // const SizedBox(height: 16.0), // Space below the button
                 ],
               );
             }
           },
         ),
-        _generatePoliciesButton(),
-        const GeneratePolicies(),
       ],
     );
   }
 
-  BlocBuilder<CustomerPhoneCallBloc, CustomerPhoneCallState>
-      _summarizeUsingAIButton() {
-    return BlocBuilder<CustomerPhoneCallBloc, CustomerPhoneCallState>(
-      builder: (context, state) {
-        bool isCallSummaryEmpty =
-            state is! CallSummaryState || state.callSummary.isEmpty;
-
-        return Visibility(
-          visible: true,
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 16.0),
-            child: ElevatedButton.icon(
-              onPressed: isCallSummaryEmpty ? _getcallsummary : () {},
-              icon: const Icon(
-                Icons.auto_mode,
-                color: Colors.white,
-              ),
-              label: const Text(
-                "Summarize Call using AI",
-                style: TextStyle(color: Colors.white),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor:
-                    isCallSummaryEmpty ? const Color(0xFF0f548c) : Colors.grey,
-                padding: const EdgeInsets.all(14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(5),
-                ),
-              ),
-            ),
-          ),
-        );
+  ElevatedButton _summarizeUsingAIButton() {
+    return ElevatedButton(
+      onPressed: () {
+        String summary = _callSummaryController.text;
+        _getRankedPolicies(summary);
       },
-    );
-  }
-
-  BlocBuilder<CustomerPhoneCallBloc, CustomerPhoneCallState>
-      _generatePoliciesButton() {
-    return BlocBuilder<CustomerPhoneCallBloc, CustomerPhoneCallState>(
-      builder: (context, state) {
-        if (state is CallSummaryState && state.callSummary.isNotEmpty) {
-          String callSummary = state.callSummary;
-          // if (callSummary.isNotEmpty) {
-          //   callSummary = state.callSummary;
-          //   print('callSummary');
-          //   print(state.callSummary);
-          // }
-          bool isCallSummaryNotEmpty = state.callSummary.isNotEmpty;
-          return Visibility(
-            visible: isCallSummaryNotEmpty,
-            child: BlocBuilder<ranked_policy.PolicyBloc,
-                ranked_policy.PolicyState>(
-              builder: (context, policyState) {
-                bool isBtnEnabled =
-                    !(policyState is ranked_policy.RankedPoliciesState &&
-                        policyState.rankedPolicies.isNotEmpty);
-                return Padding(
-                  padding: const EdgeInsets.all(0),
-                  child: ElevatedButton.icon(
-                    onPressed: isBtnEnabled
-                        ? () => _getRankedPolicies(callSummary)
-                        : () {},
-                    label: const Text(
-                      "Generate Policies",
-                      style: TextStyle(color: Colors.white),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          isBtnEnabled ? const Color(0xFF0f548c) : Colors.grey,
-                      padding: const EdgeInsets.all(14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(5),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          );
-        }
-        return const SizedBox.shrink();
-      },
+      child: const Text("Summarize Call using AI"),
     );
   }
 }
