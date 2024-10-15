@@ -41,6 +41,8 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
     // Listen for incoming video call
     SignallingService.instance.socket!.on("new_call", (data) {
       if (mounted) {
+        print('new_call_event');
+        print(data);
         // Set SDP Offer of incoming call
         setState(() => incomingSDPOffer = data);
       }

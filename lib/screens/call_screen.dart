@@ -44,6 +44,9 @@ class _CallScreenState extends State<CallScreen> {
     // initializing renderers
     _localRTCVideoRenderer.initialize();
     _remoteRTCVideoRenderer.initialize();
+    print(widget.calleeId);
+    print(widget.callerId);
+    print(widget.offer);
 
     // setup Peer Connection
     _setupPeerConnection();
@@ -97,6 +100,8 @@ class _CallScreenState extends State<CallScreen> {
     if (widget.offer != null) {
       // listen for Remote IceCandidate
       socket!.on("ice_candidate", (data) {
+        print('ice_candidate_event');
+        print(data);
         String candidate = data["iceCandidate"]["candidate"];
         String sdpMid = data["iceCandidate"]["id"];
         int sdpMLineIndex = data["iceCandidate"]["label"];
