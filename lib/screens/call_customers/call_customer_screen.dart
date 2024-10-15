@@ -1,18 +1,21 @@
 import 'dart:async';
-import 'dart:convert';
+import 'dart:math';
 import 'package:document_analyser_poc_new/blocs/customer_phone_call/customer_phone_call_bloc.dart';
 import 'package:document_analyser_poc_new/blocs/policy/policy_bloc.dart'
     as ranked_policy;
 import 'package:document_analyser_poc_new/models/leads.dart';
-import 'package:document_analyser_poc_new/screens/call_customers/widgets/generate_policies.dart';
+import 'package:document_analyser_poc_new/services/signalling_service.dart';
 import 'package:document_analyser_poc_new/utils/utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class CallCustomerPage extends StatefulWidget {
   final Leads lead;
-  const CallCustomerPage({super.key, required this.lead});
+  final String callerId;
+  const CallCustomerPage(
+      {super.key, required this.lead, required this.callerId});
 
   @override
   State<CallCustomerPage> createState() => _CallCustomerPageState();
@@ -23,24 +26,36 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
   Timer? _callTimer;
   int _elapsedTime = 0;
   late TextEditingController _callSummaryController;
+  late String selfCallerId;
+  dynamic incomingSDPOffer;
+  final remoteCallerIdTextEditingController = TextEditingController();
 
-  late IO.Socket socket;
+  final String websocketUrl = "ws://localhost:5000/signalling-server";
 
   @override
   void initState() {
     super.initState();
     _callSummaryController = TextEditingController();
+    selfCallerId = widget.callerId;
 
-    socket = IO.io("ws://localhost:5000", <String, dynamic>{
-      'transports': ['websocket'],
-      'autoConnect': false,
+    // Listen for incoming video call
+    SignallingService.instance.socket!.on("new_call", (data) {
+      if (mounted) {
+        // Set SDP Offer of incoming call
+        setState(() => incomingSDPOffer = data);
+      }
     });
+  }
 
-    socket.on('summary_data', (data) {
-      print('websocket listener data - $data');
-    });
-
-    socket.connect();
+  _joinCall({
+    required String callerId,
+    required String calleeId,
+    dynamic offer,
+  }) {
+    context.go(
+      '/incall/$callerId/$calleeId',
+      extra: offer,
+    );
   }
 
   void _getRankedPolicies(String summary) {
@@ -57,8 +72,6 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
   void dispose() {
     _callTimer?.cancel();
     _callSummaryController.dispose();
-    socket.disconnect();
-    socket.dispose();
     super.dispose();
   }
 
@@ -67,9 +80,6 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
       _isCalling = !_isCalling;
 
       if (_isCalling) {
-        // Emit offer event when the call starts
-        _sendCallOfferEvent();
-
         // Start the call timer
         _callTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
           setState(() {
@@ -78,17 +88,11 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
         });
       } else {
         _callTimer?.cancel();
-
         setState(() {
           _elapsedTime = 0;
         });
       }
     });
-  }
-
-  void _sendCallOfferEvent() {
-    Map<String, dynamic> dataToSend = {'audio_data': 'test data, working....'};
-    socket.emit('offer', dataToSend);
   }
 
   String _formatElapsedTime(int seconds) {
@@ -99,17 +103,22 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: Colors.white,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: SingleChildScrollView(child: _buildUI()),
-            )
-          ],
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Call Customer Page"),
+      ),
+      body: Container(
+        color: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: SingleChildScrollView(child: _buildUI()),
+              )
+            ],
+          ),
         ),
       ),
     );
@@ -122,12 +131,94 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
       children: [
         _headerCard(),
         const SizedBox(height: 16.0),
+        _remoteCallerIdInput(),
+        const SizedBox(height: 16.0),
         deviceType == Devices.webpage
             ? _customerDetailsDesktop()
             : _customerDetailsMobile(),
         const SizedBox(height: 16.0),
         _buildMainContent(),
         const SizedBox(height: 16.0)
+      ],
+    );
+  }
+
+  Widget _remoteCallerIdInput() {
+    return Column(
+      children: [
+        TextField(
+          controller: TextEditingController(text: selfCallerId),
+          readOnly: true,
+          textAlign: TextAlign.center,
+          enableInteractiveSelection: false,
+          decoration: InputDecoration(
+            labelText: "Your Caller ID",
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10.0),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: remoteCallerIdTextEditingController,
+          textAlign: TextAlign.center,
+          decoration: InputDecoration(
+            hintText: "Remote Caller ID",
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10.0),
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            side: const BorderSide(color: Colors.white30),
+          ),
+          child: const Text(
+            "Invite",
+            style: TextStyle(
+              fontSize: 18,
+              color: Colors.purple,
+            ),
+          ),
+          onPressed: () {
+            _joinCall(
+              callerId: selfCallerId,
+              calleeId: remoteCallerIdTextEditingController.text,
+            );
+          },
+        ),
+        if (incomingSDPOffer != null)
+          Positioned(
+            child: ListTile(
+              title: Text(
+                "Incoming Call from ${incomingSDPOffer["callerId"]}",
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.call_end),
+                    color: Colors.redAccent,
+                    onPressed: () {
+                      setState(() => incomingSDPOffer = null);
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.call),
+                    color: Colors.greenAccent,
+                    onPressed: () {
+                      _joinCall(
+                        callerId: incomingSDPOffer["callerId"]!,
+                        calleeId: selfCallerId,
+                        offer: incomingSDPOffer["sdpOffer"],
+                      );
+                    },
+                  )
+                ],
+              ),
+            ),
+          ),
       ],
     );
   }
