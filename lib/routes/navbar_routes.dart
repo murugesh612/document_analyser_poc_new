@@ -47,11 +47,12 @@ List<RouteBase> navbarRoutes = [
     builder: (context, state) {
       final callerId = state.pathParameters["callerId"]!;
       final calleeId = state.pathParameters["calleeId"]!;
+      final offer = state.extra;
 
       return CallScreen(
         callerId: callerId,
         calleeId: calleeId,
-        offer: null,
+        offer: offer,
       );
     },
   )

@@ -86,10 +86,14 @@ class _CallScreenState extends State<CallScreen> {
           ? {'facingMode': isFrontCameraSelected ? 'user' : 'environment'}
           : false,
     });
+    print('localstream');
+    print(_localStream);
 
     // add mediaTrack to peerConnection
     _localStream!.getTracks().forEach((track) {
-      _rtcPeerConnection!.addTrack(track, _localStream!);
+      if (track.kind == 'audio' || track.kind == 'video') {
+        _rtcPeerConnection!.addTrack(track, _localStream!);
+      }
     });
 
     // set source for local video renderer
@@ -99,6 +103,7 @@ class _CallScreenState extends State<CallScreen> {
     // for Incoming call
     if (widget.offer != null) {
       // listen for Remote IceCandidate
+      print('Incoming call...');
       socket!.on("ice_candidate", (data) {
         print('ice_candidate_event');
         print(data);
@@ -133,6 +138,7 @@ class _CallScreenState extends State<CallScreen> {
     }
     // for Outgoing Call
     else {
+      print('Ontgoing call...');
       // listen for local iceCandidate and add it to the list of IceCandidate
       _rtcPeerConnection!.onIceCandidate =
           (RTCIceCandidate candidate) => rtcIceCadidates.add(candidate);
