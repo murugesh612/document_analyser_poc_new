@@ -79,7 +79,7 @@ class _CallScreenState extends State<CallScreen> {
     return reader.result as Uint8List;
   }
 
-  _sendAudioChunks(MediaStream stream) {
+  _sendAudioChunks(MediaStream stream, String userId) {
     if (kIsWeb) {
       mediaRecorder.startWeb(
         _localStream!,
@@ -87,9 +87,12 @@ class _CallScreenState extends State<CallScreen> {
           // Convert Blob to ArrayBuffer (which can then be converted to Uint8List)
           Uint8List audioChunk = await _blobToUint8List(blob);
 
+          print('userId');
+          print(userId);
+
           // Emit the event to the socket, sending the audio chunk
-          socket!.emit('audio_chunk',
-              {"audioChunk": audioChunk, "callerId": widget.callerId});
+          socket!.emit(
+              'audio_chunk', {"audioChunk": audioChunk, "callerId": userId});
 
           if (isLastOne) {
             print('This was the last chunk');
@@ -126,13 +129,17 @@ class _CallScreenState extends State<CallScreen> {
           : false,
     });
 
-    _sendAudioChunks(_localStream!);
+    if (widget.offer != null) {
+      _sendAudioChunks(_localStream!, widget.callerId);
+    } else {
+      _sendAudioChunks(_localStream!, widget.calleeId);
+    }
 
     // add mediaTrack to peerConnection
     _localStream!.getTracks().forEach((track) {
-      if (track.kind == 'audio' || track.kind == 'video') {
-        _rtcPeerConnection!.addTrack(track, _localStream!);
-      }
+      // if (track.kind == 'audio' || track.kind == 'video') {
+      _rtcPeerConnection!.addTrack(track, _localStream!);
+      // }
     });
 
     // set source for local video renderer
