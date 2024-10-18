@@ -1,15 +1,14 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:document_analyser_poc_new/blocs/customer_phone_call/customer_phone_call_bloc.dart';
 import 'package:document_analyser_poc_new/blocs/policy/policy_bloc.dart'
     as ranked_policy;
 import 'package:document_analyser_poc_new/models/leads.dart';
+import 'package:document_analyser_poc_new/screens/call_customers/widgets/generate_policies.dart';
 import 'package:document_analyser_poc_new/services/signalling_service.dart';
 import 'package:document_analyser_poc_new/utils/utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class CallCustomerPage extends StatefulWidget {
   final Leads lead;
@@ -30,7 +29,7 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
   dynamic incomingSDPOffer;
   final remoteCallerIdTextEditingController = TextEditingController();
 
-  final String websocketUrl = "ws://localhost:5000/signalling-server";
+  bool isBtnEnabled = true;
 
   @override
   void initState() {
@@ -349,6 +348,7 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Bloc to conditionally show the button if callSummary is empty
         _summarizeUsingAIButton(),
         BlocBuilder<CustomerPhoneCallBloc, CustomerPhoneCallState>(
           builder: (context, state) {
@@ -358,7 +358,8 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
               );
             } else if (state is ErrorState) {
               return Padding(
-                padding: const EdgeInsets.only(bottom: 16.0),
+                padding: const EdgeInsets.only(
+                    bottom: 16.0), // Add space for error message
                 child: Text(
                   'Error: ${state.error.errorMessage}',
                   style: const TextStyle(color: Colors.red),
@@ -393,24 +394,104 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
                         borderSide: const BorderSide(color: Colors.grey),
                         borderRadius: BorderRadius.circular(4.0),
                       ),
+                      focusedBorder: OutlineInputBorder(
+                        borderSide: const BorderSide(color: Colors.black),
+                        borderRadius: BorderRadius.circular(4.0),
+                      ),
                     ),
                   ),
+                  const SizedBox(height: 16.0),
+                  // if (state is CallSummaryState && state.callSummary.isNotEmpty)
+                  // _generatePoliciesButton(),
+                  // const SizedBox(height: 16.0), // Space below the button
                 ],
               );
             }
           },
         ),
+        _generatePoliciesButton(),
+        const GeneratePolicies(),
       ],
     );
   }
 
-  ElevatedButton _summarizeUsingAIButton() {
-    return ElevatedButton(
-      onPressed: () {
-        String summary = _callSummaryController.text;
-        _getRankedPolicies(summary);
+  BlocBuilder<CustomerPhoneCallBloc, CustomerPhoneCallState>
+      _summarizeUsingAIButton() {
+    return BlocBuilder<CustomerPhoneCallBloc, CustomerPhoneCallState>(
+      builder: (context, state) {
+        bool isCallSummaryEmpty =
+            state is! CallSummaryState || state.callSummary.isEmpty;
+
+        return Visibility(
+          visible: true,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 16.0),
+            child: ElevatedButton.icon(
+              onPressed: isCallSummaryEmpty ? _getcallsummary : () {},
+              icon: const Icon(
+                Icons.auto_mode,
+                color: Colors.white,
+              ),
+              label: const Text(
+                "Summarize Call using AI",
+                style: TextStyle(color: Colors.white),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor:
+                    isCallSummaryEmpty ? const Color(0xFF0f548c) : Colors.grey,
+                padding: const EdgeInsets.all(14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(5),
+                ),
+              ),
+            ),
+          ),
+        );
       },
-      child: const Text("Summarize Call using AI"),
+    );
+  }
+
+  BlocBuilder<CustomerPhoneCallBloc, CustomerPhoneCallState>
+      _generatePoliciesButton() {
+    return BlocBuilder<CustomerPhoneCallBloc, CustomerPhoneCallState>(
+      builder: (context, state) {
+        if (state is CallSummaryState && state.callSummary.isNotEmpty) {
+          String callSummary = state.callSummary;
+          bool isCallSummaryNotEmpty = state.callSummary.isNotEmpty;
+          return Visibility(
+            visible: isCallSummaryNotEmpty,
+            child: BlocBuilder<ranked_policy.PolicyBloc,
+                ranked_policy.PolicyState>(
+              builder: (context, policyState) {
+                bool isBtnEnabled =
+                    !(policyState is ranked_policy.RankedPoliciesState &&
+                        policyState.rankedPolicies.isNotEmpty);
+                return Padding(
+                  padding: const EdgeInsets.all(0),
+                  child: ElevatedButton.icon(
+                    onPressed: isBtnEnabled
+                        ? () => _getRankedPolicies(callSummary)
+                        : () {},
+                    label: const Text(
+                      "Generate Policies",
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          isBtnEnabled ? const Color(0xFF0f548c) : Colors.grey,
+                      padding: const EdgeInsets.all(14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          );
+        }
+        return const SizedBox.shrink();
+      },
     );
   }
 }

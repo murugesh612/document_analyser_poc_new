@@ -195,7 +195,7 @@ class _CallScreenState extends State<CallScreen> {
     await _rtcPeerConnection?.close();
     _rtcPeerConnection = null;
 
-    socket?.disconnect();
+    // socket?.disconnect();
 
     if (context.mounted) {
       context.push('/dashboard');
