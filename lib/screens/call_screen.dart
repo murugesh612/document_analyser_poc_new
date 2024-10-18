@@ -25,39 +25,22 @@ class CallScreen extends StatefulWidget {
 }
 
 class _CallScreenState extends State<CallScreen> {
-  // socket instance
   final socket = SignallingService.instance.socket;
 
-  // videoRenderer for localPeer
-  final _localRTCVideoRenderer = RTCVideoRenderer();
-
-  // videoRenderer for remotePeer
-  final _remoteRTCVideoRenderer = RTCVideoRenderer();
-
-  // mediaStream for localPeer
   MediaStream? _localStream;
 
-  // RTC peer connection
+  final _remoteRTCVideoRenderer = RTCVideoRenderer();
+
   RTCPeerConnection? _rtcPeerConnection;
 
-  // list of rtcCandidates to be sent over signalling
   List<RTCIceCandidate> rtcIceCadidates = [];
 
-  // media status
-  bool isAudioOn = true, isVideoOn = true, isFrontCameraSelected = true;
+  bool isAudioOn = true;
 
   final mediaRecorder = MediaRecorder();
 
   @override
   void initState() {
-    // initializing renderers
-    _localRTCVideoRenderer.initialize();
-    _remoteRTCVideoRenderer.initialize();
-    print(widget.calleeId);
-    print(widget.callerId);
-    print(widget.offer);
-
-    // setup Peer Connection
     _setupPeerConnection();
     super.initState();
   }
@@ -69,13 +52,10 @@ class _CallScreenState extends State<CallScreen> {
     }
   }
 
-  // Helper function to convert Blob to Uint8List
   Future<Uint8List> _blobToUint8List(html.Blob blob) async {
     final reader = html.FileReader();
     reader.readAsArrayBuffer(blob);
-
     await reader.onLoad.first;
-
     return reader.result as Uint8List;
   }
 
@@ -84,13 +64,8 @@ class _CallScreenState extends State<CallScreen> {
       mediaRecorder.startWeb(
         _localStream!,
         onDataChunk: (blob, isLastOne) async {
-          // Convert Blob to ArrayBuffer (which can then be converted to Uint8List)
           Uint8List audioChunk = await _blobToUint8List(blob);
 
-          print('userId');
-          print(userId);
-
-          // Emit the event to the socket, sending the audio chunk
           socket!.emit(
               'audio_chunk', {"audioChunk": audioChunk, "callerId": userId});
 
@@ -115,151 +90,122 @@ class _CallScreenState extends State<CallScreen> {
       ]
     });
 
-    // listen for remotePeer mediaTrack event
     _rtcPeerConnection!.onTrack = (event) {
-      _remoteRTCVideoRenderer.srcObject = event.streams[0];
+      print('Remote track received: ${event.track.kind}');
+
+      if (event.track.kind == 'audio') {
+        _remoteRTCVideoRenderer.srcObject = event.streams[0];
+      }
+
       setState(() {});
     };
 
     // get localStream
     _localStream = await navigator.mediaDevices.getUserMedia({
       'audio': isAudioOn,
-      'video': isVideoOn
-          ? {'facingMode': isFrontCameraSelected ? 'user' : 'environment'}
-          : false,
+      'video': false,
     });
-
-    if (widget.offer != null) {
-      _sendAudioChunks(_localStream!, widget.callerId);
-    } else {
-      _sendAudioChunks(_localStream!, widget.calleeId);
-    }
 
     // add mediaTrack to peerConnection
     _localStream!.getTracks().forEach((track) {
-      // if (track.kind == 'audio' || track.kind == 'video') {
       _rtcPeerConnection!.addTrack(track, _localStream!);
-      // }
     });
 
-    // set source for local video renderer
-    _localRTCVideoRenderer.srcObject = _localStream;
-    setState(() {});
-
-    // for Incoming call
+    // send audio chunks for signalling
     if (widget.offer != null) {
-      // listen for Remote IceCandidate
-      print('Incoming call...');
-      socket!.on("ice_candidate", (data) {
-        print('ice_candidate_event');
-        print(data);
-        String candidate = data["iceCandidate"]["candidate"];
-        String sdpMid = data["iceCandidate"]["id"];
-        int sdpMLineIndex = data["iceCandidate"]["label"];
-
-        // add iceCandidate
-        _rtcPeerConnection!.addCandidate(RTCIceCandidate(
-          candidate,
-          sdpMid,
-          sdpMLineIndex,
-        ));
-      });
-
-      // set SDP offer as remoteDescription for peerConnection
-      await _rtcPeerConnection!.setRemoteDescription(
-        RTCSessionDescription(widget.offer["sdp"], widget.offer["type"]),
-      );
-
-      // create SDP answer
-      RTCSessionDescription answer = await _rtcPeerConnection!.createAnswer();
-
-      // set SDP answer as localDescription for peerConnection
-      _rtcPeerConnection!.setLocalDescription(answer);
-
-      // send SDP answer to remote peer over signalling
-      socket!.emit("answer_call", {
-        "callerId": widget.callerId,
-        "sdpAnswer": answer.toMap(),
-      });
-    }
-    // for Outgoing Call
-    else {
-      print('Ontgoing call...');
-      // listen for local iceCandidate and add it to the list of IceCandidate
-      _rtcPeerConnection!.onIceCandidate =
-          (RTCIceCandidate candidate) => rtcIceCadidates.add(candidate);
-
-      // when call is accepted by remote peer
-      socket!.on("call_answered", (data) async {
-        // set SDP answer as remoteDescription for peerConnection
-        await _rtcPeerConnection!.setRemoteDescription(
-          RTCSessionDescription(
-            data["sdpAnswer"]["sdp"],
-            data["sdpAnswer"]["type"],
-          ),
-        );
-
-        // send iceCandidate generated to remote peer over signalling
-        for (RTCIceCandidate candidate in rtcIceCadidates) {
-          socket!.emit("ice_candidate", {
-            "calleeId": widget.calleeId,
-            "iceCandidate": {
-              "id": candidate.sdpMid,
-              "label": candidate.sdpMLineIndex,
-              "candidate": candidate.candidate
-            }
-          });
-        }
-      });
-
-      // create SDP Offer
-      RTCSessionDescription offer = await _rtcPeerConnection!.createOffer();
-
-      // set SDP offer as localDescription for peerConnection
-      await _rtcPeerConnection!.setLocalDescription(offer);
-
-      // make a call to remote peer over signalling
-      socket!.emit('make_call', {
-        "calleeId": widget.calleeId,
-        "sdpOffer": offer.toMap(),
-      });
+      _sendAudioChunks(_localStream!, widget.callerId);
+      await _handleIncomingCall();
+    } else {
+      _sendAudioChunks(_localStream!, widget.calleeId);
+      await _handleOutgoingCall();
     }
   }
 
-  _leaveCall() {
-    socket!.close();
-    context.push('/');
+  Future<void> _handleIncomingCall() async {
+    // Listen for remote IceCandidate
+    print('Incoming call...');
+    socket!.on("ice_candidate", (data) {
+      print('ice_candidate_event');
+      print(data);
+      String candidate = data["iceCandidate"]["candidate"];
+      String sdpMid = data["iceCandidate"]["id"];
+      int sdpMLineIndex = data["iceCandidate"]["label"];
+
+      _rtcPeerConnection!.addCandidate(RTCIceCandidate(
+        candidate,
+        sdpMid,
+        sdpMLineIndex,
+      ));
+    });
+
+    await _rtcPeerConnection!.setRemoteDescription(
+      RTCSessionDescription(widget.offer["sdp"], widget.offer["type"]),
+    );
+
+    RTCSessionDescription answer = await _rtcPeerConnection!.createAnswer();
+
+    await _rtcPeerConnection!.setLocalDescription(answer);
+
+    socket!.emit("answer_call", {
+      "callerId": widget.callerId,
+      "sdpAnswer": answer.toMap(),
+    });
+  }
+
+  Future<void> _handleOutgoingCall() async {
+    print('Outgoing call...');
+    _rtcPeerConnection!.onIceCandidate =
+        (RTCIceCandidate candidate) => rtcIceCadidates.add(candidate);
+
+    socket!.on("call_answered", (data) async {
+      await _rtcPeerConnection!.setRemoteDescription(
+        RTCSessionDescription(
+          data["sdpAnswer"]["sdp"],
+          data["sdpAnswer"]["type"],
+        ),
+      );
+
+      for (RTCIceCandidate candidate in rtcIceCadidates) {
+        socket!.emit("ice_candidate", {
+          "calleeId": widget.calleeId,
+          "iceCandidate": {
+            "id": candidate.sdpMid,
+            "label": candidate.sdpMLineIndex,
+            "candidate": candidate.candidate,
+          },
+        });
+      }
+    });
+
+    RTCSessionDescription offer = await _rtcPeerConnection!.createOffer();
+
+    await _rtcPeerConnection!.setLocalDescription(offer);
+
+    socket!.emit('make_call', {
+      "calleeId": widget.calleeId,
+      "sdpOffer": offer.toMap(),
+    });
+  }
+
+  _leaveCall() async {
+    _localStream?.getTracks().forEach((track) {
+      track.stop();
+    });
+
+    await _rtcPeerConnection?.close();
+    _rtcPeerConnection = null;
+
+    socket?.disconnect();
+
+    if (context.mounted) {
+      context.push('/dashboard');
+    }
   }
 
   _toggleMic() {
-    // change status
     isAudioOn = !isAudioOn;
-    // enable or disable audio track
     _localStream?.getAudioTracks().forEach((track) {
       track.enabled = isAudioOn;
-    });
-    setState(() {});
-  }
-
-  _toggleCamera() {
-    // change status
-    isVideoOn = !isVideoOn;
-
-    // enable or disable video track
-    _localStream?.getVideoTracks().forEach((track) {
-      track.enabled = isVideoOn;
-    });
-    setState(() {});
-  }
-
-  _switchCamera() {
-    // change status
-    isFrontCameraSelected = !isFrontCameraSelected;
-
-    // switch camera
-    _localStream?.getVideoTracks().forEach((track) {
-      // ignore: deprecated_member_use
-      track.switchCamera();
     });
     setState(() {});
   }
@@ -274,27 +220,10 @@ class _CallScreenState extends State<CallScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            Expanded(
-              child: Stack(children: [
-                RTCVideoView(
-                  _remoteRTCVideoRenderer,
-                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                ),
-                Positioned(
-                  right: 20,
-                  bottom: 20,
-                  child: SizedBox(
-                    height: 150,
-                    width: 120,
-                    child: RTCVideoView(
-                      _localRTCVideoRenderer,
-                      mirror: isFrontCameraSelected,
-                      objectFit:
-                          RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                    ),
-                  ),
-                )
-              ]),
+            const Expanded(
+              child: Center(
+                child: Text('Audio Call Active'),
+              ),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
@@ -310,14 +239,6 @@ class _CallScreenState extends State<CallScreen> {
                     iconSize: 30,
                     onPressed: _leaveCall,
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.cameraswitch),
-                    onPressed: _switchCamera,
-                  ),
-                  IconButton(
-                    icon: Icon(isVideoOn ? Icons.videocam : Icons.videocam_off),
-                    onPressed: _toggleCamera,
-                  ),
                 ],
               ),
             ),
@@ -329,7 +250,6 @@ class _CallScreenState extends State<CallScreen> {
 
   @override
   void dispose() {
-    _localRTCVideoRenderer.dispose();
     _remoteRTCVideoRenderer.dispose();
     _localStream?.dispose();
     _rtcPeerConnection?.dispose();
