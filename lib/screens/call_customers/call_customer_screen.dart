@@ -31,21 +31,31 @@ class _CallCustomerPageState extends State<CallCustomerPage> {
 
   bool isBtnEnabled = true;
 
+  final String websocketUrl = "ws://localhost:5000/signalling-server";
+
+  void _initSignalingService() {
+    SignallingService.instance.init(
+      websocketUrl: websocketUrl,
+      selfCallerID: widget.callerId,
+    );
+  }
+
+  void _newCallEventListerner() {
+    SignallingService.instance.socket!.on("new_call", (data) {
+      if (mounted) {
+        setState(() => incomingSDPOffer = data);
+      }
+    });
+  }
+
   @override
   void initState() {
     super.initState();
     _callSummaryController = TextEditingController();
     selfCallerId = widget.callerId;
 
-    // Listen for incoming video call
-    SignallingService.instance.socket!.on("new_call", (data) {
-      if (mounted) {
-        print('new_call_event');
-        print(data);
-        // Set SDP Offer of incoming call
-        setState(() => incomingSDPOffer = data);
-      }
-    });
+    _initSignalingService();
+    _newCallEventListerner();
   }
 
   _joinCall({

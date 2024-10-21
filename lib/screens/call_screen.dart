@@ -1,6 +1,7 @@
 // ignore_for_file: avoid_web_libraries_in_flutter
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:document_analyser_poc_new/services/signalling_service.dart';
 import 'package:flutter/foundation.dart';
@@ -66,11 +67,23 @@ class _CallScreenState extends State<CallScreen> {
         onDataChunk: (blob, isLastOne) async {
           Uint8List audioChunk = await _blobToUint8List(blob);
 
-          socket!.emit(
-              'audio_chunk', {"audioChunk": audioChunk, "callerId": userId});
+          String base64AudioChunk = base64Encode(audioChunk);
+          // print(audioChunk);
+          print(base64AudioChunk);
+          socket!.emit('audio_chunk', {
+            "audioChunk": audioChunk,
+            "callerId": userId,
+            "base64AudioChunk": base64AudioChunk
+          });
 
           if (isLastOne) {
             print('This was the last chunk');
+            socket!.emit('audio_chunk', {
+              "audioChunk": audioChunk,
+              "callerId": userId,
+              "base64AudioChunk": base64AudioChunk,
+              "lastChunk": true
+            });
           }
         },
       );

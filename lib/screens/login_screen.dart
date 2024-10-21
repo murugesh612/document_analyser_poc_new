@@ -1,6 +1,5 @@
 import 'dart:math';
 
-import 'package:document_analyser_poc_new/services/signalling_service.dart';
 import 'package:document_analyser_poc_new/utils/app_colors.dart';
 import 'package:document_analyser_poc_new/utils/app_strings.dart';
 import 'package:flutter/material.dart';
@@ -25,17 +24,9 @@ class _LoginPageState extends State<LoginPage> {
     context.go("/dashboard");
   }
 
-  void _initSignalingService() {
-    SignallingService.instance.init(
-      websocketUrl: websocketUrl,
-      selfCallerID: selfCallerID,
-    );
-  }
-
   void _storeCallerId() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString("callerID", selfCallerID);
-    _initSignalingService();
   }
 
   @override
